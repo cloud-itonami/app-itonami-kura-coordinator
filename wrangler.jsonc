@@ -1,0 +1,12 @@
+{
+  // The coordinator's operator-facing surface. Registrations land in the same
+  // R2 bucket as the Phase 0 measurement — one bucket, because the coordinator
+  // is one writer and splitting its state across stores is the thing
+  // ADR-260726 warns about for the query plane and ADR-2607299200 section 4
+  // repeats for this one.
+  "name": "kura-coordinator",
+  "main": "out/worker.js",
+  "compatibility_date": "2026-07-01",
+  "r2_buckets": [{ "binding": "STATE", "bucket_name": "kura-phase0" }],
+  "workers_dev": true
+}

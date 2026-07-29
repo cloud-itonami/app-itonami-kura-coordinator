@@ -1,0 +1,18 @@
+;; The coordinator's public face: what a prospective node operator is quoted,
+;; and where they register.
+;;
+;; Library deps are sibling west checkouts, the pattern kotobase-protocols-worker
+;; established. The economics themselves live in kura-bugyo — this Worker adds
+;; HTTP and a durable event log, and decides nothing.
+{:source-paths
+ ["src"
+  "../kura-bugyo/src"
+  "../kura/src"
+  "../erasure/src"
+  "../merkle-sum/src"]
+ :dependencies []
+ :builds
+ {:worker {:target :esm
+           :output-dir "out"
+           :compiler-options {:parallel-build false}
+           :modules {:worker {:exports {default kura.coordinator.worker/handler}}}}}}
