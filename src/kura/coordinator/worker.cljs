@@ -149,6 +149,25 @@
 
       (= path "/operator/registry") (registry> env)
 
+      (= path "/pricing")
+      ;; The competitive claim, computed rather than typed. The site quotes
+      ;; these numbers; this is where they come from, so the page cannot drift
+      ;; from the model the way a marketing table does.
+      (js/Promise.resolve
+       (json 200
+             {:launch (pricing/versus-storj rates pricing/launch-layout)
+              :target (pricing/versus-storj rates pricing/target-layout)
+              :storj-reference pricing/storj-reference
+              :node-rates
+              (into {} (map (fn [[k v]] [k (select-keys v [:value :provenance :source])]))
+                    rates)
+              :caveat
+              (str "Storj's published figures were read on "
+                   (:read-at pricing/storj-reference)
+                   " and are a point-in-time reading, not a live feed. Our own "
+                   "rates are benchmarked against theirs, not measured on our "
+                   "network — Phase 0 exists to replace them.")}))
+
       :else
       (js/Promise.resolve
        (json 200
