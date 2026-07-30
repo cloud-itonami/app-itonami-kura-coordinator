@@ -63,7 +63,7 @@ against what the B2 bucket actually holds. Live:
 ```
 b2-measured  {objects 34, bytes 139264}
 cost/month   $0.000001   cap $25.00   headroom $25.00
-capacity     2.08 TB on B2 alone / 4.17 TB mirrored with owned disk
+capacity     1.80 TB on B2 alone / 3.60 TB mirrored with owned disk
 ```
 
 **Usage is summed from the bucket, not from a counter this service keeps.** A
@@ -71,10 +71,40 @@ counter drifts from the bill the moment anything writes outside it, and several
 things do: the conformance probe, the durability run, a manual fix. The bucket
 is the only thing that knows.
 
-Phase 0 rents its storage and renting loses money by construction — B2 is
-$6/TB-month against a $1.50/TB-month node payout. The cap exists so the loss is
-bounded and known rather than discovered, and `budget/admit-write?` **refuses**
-past it rather than warning.
+Phase 0 rents its storage and renting loses money *on the wholesale basis* — B2
+is $6.95/TB-month against a $1.50/TB-month node payout. The cap exists so the
+loss is bounded and known rather than discovered, and `budget/admit-write?`
+**refuses** past it rather than warning.
+
+**`:loss-making?` is now labelled, and the same bill appears on both bases.**
+Selling capacity by the terabyte at the node rate card loses money on a rented
+fleet; selling a quota at a subscription price does not, and the response
+carries a `:retail` block so neither number can be read as the verdict. With no
+subscribers yet that block reports a loss too — but its `:why` distinguishes
+*no revenue attached* from *a price that fails to cover its cost*, which are
+the same sign and different findings.
+
+The capacity figures fell 14% on 2026-07-30, when B2's rate was corrected from
+$6.00 to the published $6.95. The cap did not move; what it buys did.
+
+### `GET /pricing`
+
+Both bases, each labelled. `:launch` and `:target` are the per-terabyte
+comparison against Storj, computed from the node rate card. `:retail` is the
+quota-tier card — plans adopted from kotobase.net, priced against the actual
+provider bill under two fleet mixes:
+
+```
+                     B2 only ($6.95/physical TB)   half onto owned disk
+Developer  ¥2,980    $0.75/mo   margin 96.2%       $0.38/mo   margin 98.1%
+Team Pro   ¥19,800   $7.54/mo   margin 94.3%       $3.77/mo   margin 97.2%
+```
+
+A subscription is not anchored to $/TB, so the storage multiplier that
+dominates the wholesale card is a rounding error here — the implied price is
+$370 and $246 per logical TB-month, 53x and 35x Storj retail. Margins are
+priced at the worst case each quota permits, so they are floors. **No
+subscription has been sold.**
 
 ### `GET /operator/quote?tb=N`
 

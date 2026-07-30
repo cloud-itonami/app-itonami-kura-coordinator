@@ -49,12 +49,29 @@
 (def ^:private budget-policy
   "The operational ceiling, set to $25/month by the owner on 2026-07-30.
 
-  Phase 0 rents its storage and renting loses money by construction, so the
-  point of the cap is that the loss is bounded and known rather than
-  discovered. $25 buys ~4.17 logical TB mirrored across B2 and owned disk, or
-  ~2.08 TB on B2 alone — and the practical limit today is smaller than either,
-  because the owned side is a 56 GB slice of a Mac mini."
+  Phase 0 rents its storage and renting loses money *on the wholesale basis*,
+  so the point of the cap is that the loss is bounded and known rather than
+  discovered. $25 buys ~3.60 logical TB mirrored across B2 and owned disk, or
+  ~1.80 TB on B2 alone — and the practical limit today is smaller than either,
+  because the owned side is a 56 GB slice of a Mac mini.
+
+  Those two figures fell 14% on 2026-07-30 when B2's rate was corrected from
+  $6.00 to the published $6.95. The cap itself did not move; what it buys did."
   (budget/policy {:monthly-usd-cap 25.00}))
+
+(def ^:private phase-0-mix
+  "Where physical bytes actually sit, as a fraction, for costing purposes.
+
+  B2-only because that is what this service can measure — `b2-usage>` reads one
+  bucket. The other three domains are real and hold shards, so this OVERSTATES
+  the bill; stated rather than quietly blended, because a mix nobody measured
+  is a guess and this one at least errs against us."
+  {:backblaze-b2 1.0})
+
+(def ^:private mirror-mix
+  "Half onto owned disk — the arrangement the budget report already quotes
+  capacity for, priced here so the retail card can be read the same way."
+  {:backblaze-b2 0.5 :self-hosted 0.5})
 
 (def ^:private b2-host "s3.us-west-004.backblazeb2.com")
 
@@ -348,6 +365,16 @@
                            (merge r
                                   {:b2-measured u
                                    :cap-set-by "owner, 2026-07-30"
+                                   ;; The same bill on the other basis. Without
+                                   ;; it `loss-making?` reads as a verdict on
+                                   ;; the business rather than on selling
+                                   ;; capacity by the terabyte, which is not
+                                   ;; how this is going to be sold.
+                                   :retail
+                                   (dissoc (budget/retail-report
+                                            budget-policy usage {}
+                                            pricing/launch-layout phase-0-mix)
+                                           :card)
                                    :capacity-tb
                                    {:b2-only (budget/capacity-tb budget-policy
                                                                  pricing/launch-layout
@@ -367,14 +394,35 @@
       ;; The competitive claim, computed rather than typed. The site quotes
       ;; these numbers; this is where they come from, so the page cannot drift
       ;; from the model the way a marketing table does.
+      ;;
+      ;; Two bases, both labelled. `:launch` and `:target` price a terabyte
+      ;; against the node rate card — that is the Storj comparison and what a
+      ;; third-party operator is quoted against. `:retail` sells a quota at a
+      ;; subscription price and is not anchored to $/TB at all. The same bytes
+      ;; are loss-making on the first and profitable on the second, so serving
+      ;; either one unlabelled would be the more misleading choice.
       (js/Promise.resolve
        (json 200
-             {:launch (pricing/versus-storj rates pricing/launch-layout)
+             {:basis "wholesale — :launch and :target price capacity per TB
+                      against the node payout rate card. See :retail for the
+                      subscription basis, which is how customers are billed."
+              :launch (pricing/versus-storj rates pricing/launch-layout)
               :target (pricing/versus-storj rates pricing/target-layout)
               :storj-reference pricing/storj-reference
               :node-rates
               (into {} (map (fn [[k v]] [k (select-keys v [:value :provenance :source])]))
                     rates)
+              :retail
+              {:phase-0-b2-only
+               (pricing/retail-card (budget/cost-basis pricing/launch-layout
+                                                       phase-0-mix))
+               :b2-plus-owned-mirror
+               (pricing/retail-card (budget/cost-basis pricing/launch-layout
+                                                       mirror-mix))
+               :note (str "Tier prices are ADOPTED from kotobase.net, not "
+                          "derived here. Margins are priced at the worst case "
+                          "each quota permits, so they are floors. No "
+                          "subscription has been sold.")}
               :caveat
               (str "Storj's published figures were read on "
                    (:read-at pricing/storj-reference)
@@ -389,7 +437,9 @@
               :status (str "Phase 0. Measuring the node-loss rate on rented "
                            "backends. Not accepting customer data and not "
                            "taking bonds.")
-              :routes {"GET /budget" "the $25/month ceiling against what the bucket actually holds"
+              :routes {"GET /budget" "the $25/month ceiling against what the bucket actually holds, on both bases"
+                       "GET /pricing" "wholesale $/TB against Storj, and the retail quota-tier card"
+                       "GET /fleet" "declared failure domains and the margin each layout leaves"
                        "GET /operator/quote?tb=N" "what you would bond, earn and be audited on"
                        "POST /operator/register" "record intent — takes no bond, places no data"
                        "GET /operator/registry" "who has registered, publicly"}
