@@ -28,7 +28,9 @@
             [kura.bugyo.plane :as plane]
             [kura.placement :as placement]
             [kura.bugyo.pricing :as pricing]
+            [erasure.lrc :as lrc]
             [kura.node.crypto-noble :as nc]
+            [kura.node.store :as store]
             [kura.node.http-fetch :as http]
             [kura.node.s3 :as s3]))
 
@@ -194,6 +196,98 @@
                               key that posts it, and that is a different endpoint"]
                             :your-quote q}))))))))
 
+(defn- latest-nodes
+  "Deduplicate the append-only log to the newest claim per node id.
+
+  Re-registration is how an operator corrects a claim, so the log has several
+  entries per node on purpose. Counting domains over every entry would inflate
+  the fleet by however many times somebody re-registered."
+  [recs]
+  (->> recs
+       (keep (fn [r] (when (get-in r [:node :node-id]) (:node r))))
+       (reduce (fn [acc n] (assoc acc (:node-id n) n)) {})
+       vals
+       (sort-by :node-id)
+       vec))
+
+(defn- layout-fit
+  "Whether `lay` fits the fleet's declared membership, and with how much room.
+
+  Reported for BOTH layouts because the interesting fact is the difference. The
+  launch code has parity to spare; the target code — the cheaper one, the whole
+  point of the exercise — sits exactly at the edge. A single number per layout
+  hides which."
+  [lay d]
+  (let [tol (lrc/max-tolerated-erasures lay)
+        n (:n lay)
+        ;; An even spread is the best a placement can do with this membership.
+        ;; Reporting the best case is the honest direction: if the even spread
+        ;; breaks the cap, no placement fixes it.
+        largest (if (pos? d) (js/Math.ceil (/ n d)) n)]
+    {:layout (select-keys lay [:k :r :g :l :n])
+     :multiplier (/ n (:k lay))
+     :shards n
+     :tolerated tol
+     :largest-domain-even-spread largest
+     :survivable? (<= largest tol)
+     :margin-after-domain-loss (- tol largest)
+     :note (cond
+             (> largest tol)
+             (str "One domain would hold " largest " shards and the code tolerates "
+                  tol " — losing a domain loses the object.")
+             (zero? (- tol largest))
+             (str "Any single domain can vanish and the object is still readable, "
+                  "with NOTHING left over: a domain loss plus one more lost shard "
+                  "is data loss. A fifth domain would buy one shard of margin, a "
+                  "sixth two. This is the number to watch, not the domain count.")
+             :else
+             (str "A domain can vanish with " (- tol largest)
+                  " shard(s) of margin left."))}))
+
+(defn- fleet> [env]
+  (-> (.get (.-STATE ^js env) log-key)
+      (.then (fn [o] (if o (.text ^js o) "")))
+      (.then (fn [text]
+               (let [recs (keep (fn [l] (try (js->clj (js/JSON.parse l) :keywordize-keys true)
+                                             (catch :default _ nil)))
+                                (remove empty? (.split text "\n")))
+                     nodes (latest-nodes recs)
+                     descs (mapv (fn [n]
+                                   (store/descriptor
+                                    {:node-id (:node-id n)
+                                     :failure-domain (into {} (map (fn [[k v]] [k (str v)]))
+                                                           (or (:domains n) {:unstated "unstated"}))
+                                     ;; A node that declared a provider shares that
+                                     ;; provider's fate; one that declared a site is
+                                     ;; independent of other sites.
+                                     :independence (if (get (:domains n) :provider)
+                                                     :shared-provider
+                                                     :independent)
+                                     :availability (keyword (or (:availability n) "intermittent"))
+                                     :capabilities #{}}))
+                                 nodes)
+                     dom (store/effective-domains descs)
+                     d (:count dom)]
+                 (json 200
+                       {:registered-nodes (count nodes)
+                        :effective-domains d
+                        :domains (:domains dom)
+                        :always-on-nodes (count (filter #(= :always-on (:availability %)) descs))
+                        :intermittent-nodes (count (filter #(= :intermittent (:availability %)) descs))
+                        :launch (layout-fit pricing/launch-layout d)
+                        :target (layout-fit pricing/target-layout d)
+                        :priced-at "launch"
+                        :why-not-target-yet
+                        (str "The target layout fits this membership and has been "
+                             "demonstrated end to end — but at four domains its "
+                             "margin after a domain loss is zero. Pricing moves to "
+                             "target when there is margin to lose, not when the "
+                             "arithmetic first closes.")
+                        :what-this-is-not
+                        ["not a probe — every line is a claim an operator made at registration, and a claim is not a measurement"
+                         "not a durability figure — this is the code's tolerance against declared domains, not an observed loss rate"
+                         "an even spread is assumed; a real placement under kura.placement caps can do no better and may do worse"]}))))))
+
 (defn- registry> [env]
   (-> (.get (.-STATE ^js env) log-key)
       (.then (fn [o] (if o (.text ^js o) "")))
@@ -205,8 +299,15 @@
                  (json 200
                        {:registrations (count recs)
                         :committed-tb (reduce + 0 (map #(get-in % [:node :physical-tb] 0) recs))
+                        ;; availability and domains are surfaced because the
+                        ;; fleet arithmetic depends on them. A registry that
+                        ;; lists committed terabytes and hides which domain they
+                        ;; sit in cannot be used to check a durability claim,
+                        ;; which is the only reason to publish it.
                         :operators (mapv (fn [r] {:node-id (get-in r [:node :node-id])
                                                   :physical-tb (get-in r [:node :physical-tb])
+                                                  :availability (get-in r [:node :availability])
+                                                  :domains (get-in r [:node :domains])
                                                   :at (:at r)})
                                          recs)
                         :note (str "Public on purpose. A permissionless network whose "
@@ -229,6 +330,9 @@
       (-> (.json request)
           (.then (fn [b] (register> env (js->clj b :keywordize-keys true))))
           (.catch (fn [_] (json 400 {:error "expected a JSON body"}))))
+
+      (= path "/fleet")
+      (fleet> env)
 
       (= path "/operator/registry") (registry> env)
 

@@ -33,6 +33,28 @@ bonus copies rather than dependencies. That is the condition that makes consumer
 hardware safe to accept at all — and most of the world's spare storage is on
 machines that sleep.
 
+### `GET /fleet`
+
+Declared membership, the failure domains it collapses into, and whether each
+layout fits — **with the margin**, which is the number that matters:
+
+```
+nodes 5 · domains 4 · always-on 4 · intermittent 1
+
+launch  n=32  2.0×    largest 8/13   margin 5
+target  n=26  1.625×  largest 7/7    margin 0
+```
+
+The target layout — the cheaper one, the whole point — now fits, and has been
+demonstrated end to end across all four domains. **It is still not what we
+price at**, because at four domains its margin after a domain loss is zero: lose
+a domain and one more shard and the object is gone. A fifth domain buys one
+shard of margin, a sixth two. **Pricing moves to target when there is margin to
+lose, not when the arithmetic first closes.**
+
+Every line is a claim an operator made at registration. A claim is not a
+measurement, and the endpoint says so.
+
 ### `GET /budget`
 
 The operational spending ceiling — **$25/month, set by the owner 2026-07-30** —
