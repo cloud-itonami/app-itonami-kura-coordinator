@@ -26,6 +26,7 @@
             [kura.bugyo.budget :as budget]
             [kura.bugyo.collateral :as collateral]
             [kura.bugyo.plane :as plane]
+            [kura.placement :as placement]
             [kura.bugyo.pricing :as pricing]
             [kura.node.crypto-noble :as nc]
             [kura.node.http-fetch :as http]
@@ -126,14 +127,43 @@
         (.then (fn [_] record)))))
 
 (defn- register> [env body]
-  (let [{:keys [node-id contact physical-tb domains]} body
-        tb (or physical-tb 0)]
+  (let [{:keys [node-id contact physical-tb domains availability]} body
+        tb (or physical-tb 0)
+        av (keyword availability)]
     (cond
       (not (and (string? node-id) (seq node-id)))
       (js/Promise.resolve (json 400 {:error "node-id is required"}))
 
       (not (and (number? tb) (pos? tb)))
       (js/Promise.resolve (json 400 {:error "physical-tb must be a positive number"}))
+
+      ;; Asked rather than assumed, and refused rather than defaulted. Either
+      ;; default is a lie about somebody's durability: guess always-on and a
+      ;; fleet of laptops reports nines it does not have; guess intermittent and
+      ;; rented buckets become unplaceable. The operator is the only one who
+      ;; knows whether the machine sleeps, so the operator says.
+      (not (contains? placement/availabilities av))
+      (js/Promise.resolve
+       (json 400 {:error "availability is required"
+                  :must-be-one-of ["always-on" "intermittent"]
+                  :how-to-choose
+                  {"always-on" (str "rented object storage, or a machine that "
+                                    "stays powered and reachable — a server, a "
+                                    "mini that lives on a shelf")
+                   "intermittent" (str "a laptop, a desktop that sleeps, a "
+                                       "machine on a connection that comes and "
+                                       "goes. The disk being fine is not the "
+                                       "question; being reachable is.")}
+                  :why (str "The code's tolerance for missing shards is a "
+                            "budget. Shards on machines that sleep spend it "
+                            "every night, so placement caps how many may sit "
+                            "there and keeps every object readable from "
+                            "always-on nodes alone. Declaring :intermittent "
+                            "costs you nothing — it is not a lower tier. It "
+                            "means fewer shards are placed with you, and it "
+                            "means you are NOT slashed for being asleep, which "
+                            "you would be if you claimed always-on and were "
+                            "not.")}))
 
       :else
       (let [q (quote-for tb)
@@ -144,6 +174,7 @@
                    :node (plane/node {:node-id node-id
                                       :physical-tb tb
                                       :bond-usd 0.0
+                                      :availability av
                                       :domains (or domains {})})
                    :contact contact
                    :quoted-bond-usd (:bond-usd q)}]

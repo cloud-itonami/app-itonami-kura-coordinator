@@ -8,6 +8,31 @@ metadata plane were all libraries with no way in.
 
 ## Routes
 
+### `POST /operator/register` — `availability` is required
+
+```json
+{"node-id": "my-node", "physical-tb": 0.84,
+ "availability": "intermittent",
+ "domains": {"operator": "alice", "site": "home"}}
+```
+
+Omit it and the request is **refused**, not defaulted. Either default is a lie
+about somebody's durability: assume `always-on` and a fleet of laptops reports
+nines it does not have; assume `intermittent` and rented buckets — always-on
+because that is the product — become unplaceable.
+
+**Declaring `intermittent` costs you nothing.** It is not a lower tier. It means
+fewer shards are placed with you, and it means you are **not** slashed for being
+asleep — which you would be if you claimed `always-on` and were not. A laptop
+should say `intermittent`. A machine that stays powered and reachable says
+`always-on`.
+
+The point of the cap is exact: set at or below the code's tolerance, every
+object stays **readable from always-on nodes alone**, so sleeping nodes are
+bonus copies rather than dependencies. That is the condition that makes consumer
+hardware safe to accept at all — and most of the world's spare storage is on
+machines that sleep.
+
 ### `GET /budget`
 
 The operational spending ceiling — **$25/month, set by the owner 2026-07-30** —
