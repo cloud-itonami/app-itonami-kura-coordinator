@@ -7,9 +7,11 @@
 {:source-paths
  ["src"
   "../kura-bugyo/src"
+  "../kura-node/src"
   "../kura/src"
   "../erasure/src"
-  "../merkle-sum/src"]
+  "../merkle-sum/src"
+  "../sigv4/src"]
  :dependencies []
  :builds
  {:worker {:target :esm

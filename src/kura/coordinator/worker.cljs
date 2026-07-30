@@ -22,9 +22,14 @@
   permissionless onboarding plus nothing at stake yet — there is nothing to
   steal and nothing to spend. When a bond is attached, the registration has to
   be signed by the key that posts it, and that is a different endpoint."
-  (:require [kura.bugyo.collateral :as collateral]
+  (:require [clojure.string :as str]
+            [kura.bugyo.budget :as budget]
+            [kura.bugyo.collateral :as collateral]
             [kura.bugyo.plane :as plane]
-            [kura.bugyo.pricing :as pricing]))
+            [kura.bugyo.pricing :as pricing]
+            [kura.node.crypto-noble :as nc]
+            [kura.node.http-fetch :as http]
+            [kura.node.s3 :as s3]))
 
 (defn- json [status body]
   (js/Response. (js/JSON.stringify (clj->js body) nil 2)
@@ -37,6 +42,53 @@
 (def ^:private pol (collateral/policy {}))
 (def ^:private layout pricing/launch-layout)
 (def ^:private log-key "coordinator/operator-registry.v1.jsonl")
+
+(def ^:private budget-policy
+  "The operational ceiling, set to $25/month by the owner on 2026-07-30.
+
+  Phase 0 rents its storage and renting loses money by construction, so the
+  point of the cap is that the loss is bounded and known rather than
+  discovered. $25 buys ~4.17 logical TB mirrored across B2 and owned disk, or
+  ~2.08 TB on B2 alone — and the practical limit today is smaller than either,
+  because the owned side is a 56 GB slice of a Mac mini."
+  (budget/policy {:monthly-usd-cap 25.00}))
+
+(def ^:private b2-host "s3.us-west-004.backblazeb2.com")
+
+(defn- b2-usage>
+  "Actual bytes in the B2 bucket, summed from a ListObjectsV2 walk.
+
+  Measured rather than tracked. A counter the coordinator increments is a
+  counter that drifts from the bill the moment anything writes outside it —
+  and several things do: the conformance probe, the durability run, a manual
+  fix. The bucket is the only thing that knows."
+  [env]
+  (if-not (and (.-B2_KEY_ID ^js env) (.-B2_APP_KEY ^js env))
+    (js/Promise.resolve nil)
+    (let [crypto (nc/noble-crypto)
+          path (s3/object-path "kura-phase0-b2" "")
+          q (s3/canonical-query {"list-type" "2" "max-keys" "1000"})
+          signed (s3/sign {:crypto crypto
+                           :key-id (.-B2_KEY_ID ^js env)
+                           :secret (.-B2_APP_KEY ^js env)
+                           :region "us-west-004" :service "s3" :host b2-host
+                           :method :get :path path :query q
+                           :body (js/Uint8Array. 0)
+                           :now-iso (http/now-iso)})]
+      (-> (s3/-request (http/fetch-http)
+                       {:method :get
+                        :url (str "https://" b2-host path "?" q)
+                        :headers signed
+                        :body (js/Uint8Array. 0)})
+          (.then (fn [{:keys [status body]}]
+                   (when (= 200 status)
+                     (let [txt (.decode (js/TextDecoder.) body)
+                           sizes (map #(js/parseInt (second %))
+                                      (re-seq #"<Size>(\d+)</Size>" txt))]
+                       {:objects (count sizes)
+                        :bytes (reduce + 0 sizes)
+                        :truncated? (some? (re-find #"<IsTruncated>true" txt))}))))
+          (.catch (fn [_] nil))))))
 
 (defn- quote-for [tb]
   (let [q (collateral/onboarding-quote rates pol layout tb)
@@ -149,6 +201,33 @@
 
       (= path "/operator/registry") (registry> env)
 
+      (= path "/budget")
+      ;; The ceiling, against what the bucket actually holds. Reporting a cap
+      ;; without the usage beside it is reporting an intention.
+      (-> (b2-usage> env)
+          (.then (fn [u]
+                   (let [usage (if u {:backblaze-b2 (:bytes u)} {})
+                         r (budget/report budget-policy rates
+                                          pricing/launch-layout usage)]
+                     (json 200
+                           (merge r
+                                  {:b2-measured u
+                                   :cap-set-by "owner, 2026-07-30"
+                                   :capacity-tb
+                                   {:b2-only (budget/capacity-tb budget-policy
+                                                                 pricing/launch-layout
+                                                                 {:backblaze-b2 1.0})
+                                    :b2-plus-owned-mirror
+                                    (budget/capacity-tb budget-policy
+                                                        pricing/launch-layout
+                                                        {:backblaze-b2 0.5 :self-hosted 0.5})}
+                                   :note-on-measurement
+                                   (str "Usage is summed from the bucket, not from a "
+                                        "counter this service keeps. A counter drifts "
+                                        "from the bill the moment anything writes "
+                                        "outside it, and several things do — the probe, "
+                                        "the durability run, a manual fix.")}))))))
+
       (= path "/pricing")
       ;; The competitive claim, computed rather than typed. The site quotes
       ;; these numbers; this is where they come from, so the page cannot drift
@@ -175,7 +254,8 @@
               :status (str "Phase 0. Measuring the node-loss rate on rented "
                            "backends. Not accepting customer data and not "
                            "taking bonds.")
-              :routes {"GET /operator/quote?tb=N" "what you would bond, earn and be audited on"
+              :routes {"GET /budget" "the $25/month ceiling against what the bucket actually holds"
+                       "GET /operator/quote?tb=N" "what you would bond, earn and be audited on"
                        "POST /operator/register" "record intent — takes no bond, places no data"
                        "GET /operator/registry" "who has registered, publicly"}
               :see-also {"conformance and durability"

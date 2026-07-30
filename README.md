@@ -8,6 +8,27 @@ metadata plane were all libraries with no way in.
 
 ## Routes
 
+### `GET /budget`
+
+The operational spending ceiling — **$25/month, set by the owner 2026-07-30** —
+against what the B2 bucket actually holds. Live:
+
+```
+b2-measured  {objects 34, bytes 139264}
+cost/month   $0.000001   cap $25.00   headroom $25.00
+capacity     2.08 TB on B2 alone / 4.17 TB mirrored with owned disk
+```
+
+**Usage is summed from the bucket, not from a counter this service keeps.** A
+counter drifts from the bill the moment anything writes outside it, and several
+things do: the conformance probe, the durability run, a manual fix. The bucket
+is the only thing that knows.
+
+Phase 0 rents its storage and renting loses money by construction — B2 is
+$6/TB-month against a $1.50/TB-month node payout. The cap exists so the loss is
+bounded and known rather than discovered, and `budget/admit-write?` **refuses**
+past it rather than warning.
+
 ### `GET /operator/quote?tb=N`
 
 Answers *should I*, not *can I*. Runs
