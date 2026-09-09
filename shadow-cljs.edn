@@ -9,7 +9,7 @@
   "../kura-bugyo/src"
   "../kura-node/src"
   "../kura/src"
-  "../kotoba-kir/src"
+  "../osaho/src"
   "../kotoba-hir/src"
   "../erasure/src"
   "../merkle-sum/src"
